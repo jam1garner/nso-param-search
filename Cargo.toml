@@ -7,5 +7,4 @@ edition = "2018"
 [dependencies]
 nxo-parser = { git = "https://github.com/jam1garner/nxo-parser.git" }
 binread = "1.4"
-yaxpeax-arm = "0.0.6"
-yaxpeax-arch = "0.0.4"
+aarch64-decode = { git = "https://github.com/jam1garner/aarch64-decode" }

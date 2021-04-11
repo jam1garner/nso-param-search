@@ -3,6 +3,11 @@
 version = 3
 
 [[package]]
+name = "aarch64-decode"
+version = "0.1.0"
+source = "git+https://github.com/jam1garner/aarch64-decode#098127aeec8a1f9fce68f2c112454267a802d5c4"
+
+[[package]]
 name = "binread"
 version = "1.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -79,6 +84,7 @@ dependencies = [
 name = "nso-param-search"
 version = "0.1.0"
 dependencies = [
+ "aarch64-decode",
  "binread",
  "nxo-parser",
 ]

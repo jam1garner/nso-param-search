@@ -1,4 +1,4 @@
-#![feature(array_windows)]
+#![feature(array_windows, array_chunks)]
 
 use nxo_parser::NsoFile;
 use binread::BinReaderExt;
@@ -10,8 +10,7 @@ use std::collections::HashMap;
 use std::io::BufRead;
 use std::io::Read;
 
-use yaxpeax_arch::Decoder;
-use yaxpeax_arm::armv8::a64::Operand;
+use aarch64_decode::{decode_a32, decode_a64, Instr};
 
 fn main() {
     let mut file = BufReader::new(File::open("/home/jam/re/ult/1101/main").unwrap());
@@ -56,35 +55,47 @@ fn main() {
         }
     }
 
-    let mut all_imms = std::collections::HashSet::new();
+    let mut all_imms = HashMap::new();
 
-    let decoder = yaxpeax_arm::armv8::a64::InstDecoder::default();
-    let mut cursor = std::io::Cursor::new(&text[..]).bytes().map(|x| x.unwrap());
-    loop {
-        match decoder.decode(&mut cursor) {
-            Ok(instr) => {
-                for op in &instr.operands {
-                    match op {
-                        Operand::Imm16(imm) => {
-                            all_imms.insert(*imm);
-                        }
-                        _ => {}
-                    }
-                }
+    let text_iter = text
+            .array_chunks()
+            .enumerate()
+            .step_by(4)
+            .filter_map(|(i, &instr)| Some((i, {
+                let instr = u32::from_be_bytes(instr);
+                decode_a32(instr)
+                    .or_else(|| decode_a64(instr))?
+            })));
+
+    for (i, instr) in text_iter.take(1000) {
+        println!("{:08x} | {:?}", i, instr);
+        match instr {
+            Instr::Movn64Movewide { imm16, .. } => {
+                all_imms.insert(imm16, i);
             }
-            Err(yaxpeax_arm::armv8::a64::DecodeError::ExhaustedInput) => {
-                break
-            }
-            _ => continue
+            _ => ()
         }
     }
 
     for (hash, label) in param_labels.iter() {
-        let low = *hash as u16;
-        let hi = (*hash >> 16) as u16;
+        let low = (*hash & 0xFFFF) as u16;
+        let hi = ((*hash >> 16) & 0xFFFF) as u16;
 
-        if all_imms.contains(&low) && all_imms.contains(&hi) {
-            println!("imms found - {}", label);
-        }
+        if let Some(pos) = all_imms.get(&low) {
+            //println!("{} low - {:#x?}", label, pos);
+        } 
+
+        if let Some(pos) = all_imms.get(&hi) {
+            //println!("{} hi - {:#x?}", label, pos);
+        } 
+
+        //if all_imms.contains(&low) && all_imms.contains(&hi) {
+        //    println!("imms found - {}", label);
+        //}
+        //else if all_imms.contains(&hash) {
+        //    println!("single imm found - {}", label);
+        //} else if all_imms.contains(&low) || all_imms.contains(&hi) {
+        //    println!("half found - {}", label);
+        //}
     }
 }
