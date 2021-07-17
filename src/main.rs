@@ -13,6 +13,8 @@ use std::path::PathBuf;
 
 use std::convert::TryInto;
 
+use multimap::MultiMap;
+
 fn write_start() {
     println!("flatapi = ghidra.program.flatapi.FlatProgramAPI(currentProgram)");
 }
@@ -21,26 +23,25 @@ fn output(section: &str, offset: usize, label: &str) {
     println!("flatapi.createLabel(currentProgram.getMemory().getBlock('.{}').getStart().add({:#x?}), 'hash40_{}', False)", section, offset, label);
 }
 
+fn crc32(string: &str) -> u32 {
+    let mut hasher = crc32fast::Hasher::new();
+    hasher.update(string.as_ref());
+    hasher.finalize()
+}
+
+fn hash40(string: &str) -> u64 {
+    ((string.len() as u64) << 32) | (crc32(string) as u64)
+}
+
 #[derive(StructOpt)]
 struct Args {
     nso_file: PathBuf,
     param_labels: PathBuf,
+    arc_labels: PathBuf,
 }
 
-fn main() {
-    let args = Args::from_args();
-    write_start();
-    let mut file = BufReader::new(File::open(args.nso_file).unwrap());
-    let nso: NsoFile = file.read_le().unwrap();
-
-    let rodata = nso.get_rodata(&mut file).unwrap();
-    let hash_to_pos: HashMap<_, _> = rodata
-        .array_windows()
-        .enumerate()
-        .map(|(i, &x)| (u32::from_le_bytes(x), i))
-        .collect();
-
-    let param_labels = BufReader::new(File::open(&args.param_labels).unwrap())
+fn get_labels_crc32(args: &Args) -> Vec<(u32, String)> {
+    BufReader::new(File::open(&args.param_labels).unwrap())
         .lines()
         .skip(1)
         .map(|line| {
@@ -51,28 +52,83 @@ fn main() {
 
             (crc, label.to_owned())
         })
-        .collect::<Vec<_>>();
+        .chain(
+            BufReader::new(File::open(&args.arc_labels).unwrap())
+                .lines()
+                .map(|line| {
+                    let line = line.unwrap();
+                    let line = line.trim();
+
+                    (crc32(&line), line.to_owned())
+                })
+        )
+        .collect()
+}
+
+fn get_labels_hash40(args: &Args) -> Vec<(u64, String)> {
+    BufReader::new(File::open(&args.param_labels).unwrap())
+        .lines()
+        .skip(1)
+        .map(|line| {
+            let line = line.unwrap();
+            let mut line = line.split(',');
+            let (hash, label) = (line.next().unwrap(), line.next().unwrap());
+            let hash40 = u64::from_str_radix(&hash[2..], 16).unwrap();
+
+            (hash40, label.to_owned())
+        })
+        .chain(
+            BufReader::new(File::open(&args.arc_labels).unwrap())
+                .lines()
+                .map(|line| {
+                    let line = line.unwrap();
+                    let line = line.trim();
+
+                    (hash40(&line), line.to_owned())
+                })
+        )
+        .collect()
+}
+
+fn main() {
+    let args = Args::from_args();
+    write_start();
+    let mut file = BufReader::new(File::open(&args.nso_file).unwrap());
+    let nso: NsoFile = file.read_le().unwrap();
+
+    let rodata = nso.get_rodata(&mut file).unwrap();
+    let hash_to_pos: MultiMap<_, _> = rodata
+        .array_windows()
+        .enumerate()
+        .map(|(i, &x)| (u32::from_le_bytes(x), i))
+        .collect();
+
+    let param_labels = get_labels_crc32(&args);
 
     for (hash, label) in param_labels.iter() {
-        if let Some(pos) = hash_to_pos.get(&hash) {
-            //output("rodata", *pos, label);
+        if let Some(positions) = hash_to_pos.get_vec(&hash) {
+            for pos in positions {
+                output("rodata", *pos, label);
+            }
         }
     }
 
     let text = nso.get_text(&mut file).unwrap();
-    let hash_to_pos: HashMap<_, _> = text
+    let hash_to_pos: MultiMap<_, _> = text
         .array_windows()
         .enumerate()
         .map(|(i, &x)| (u32::from_le_bytes(x), i))
         .collect();
 
     for (hash, label) in param_labels.iter() {
-        if let Some(pos) = hash_to_pos.get(&hash) {
-            //output("text", *pos, label);
+        if let Some(positions) = hash_to_pos.get_vec(&hash) {
+            for pos in positions {
+                output("text", *pos, label);
+            }
         }
     }
 
-    let hash_to_pos: HashMap<_, _> = text.windows(0xc)
+    let hash_to_pos: MultiMap<_, _> = text.windows(0xc)
         .enumerate()
         .step_by(4)
         .filter_map(|(pos, instrs)| {
@@ -105,22 +161,13 @@ fn main() {
         })
         .collect();
 
-    let param_labels = BufReader::new(File::open(&args.param_labels).unwrap())
-        .lines()
-        .skip(1)
-        .map(|line| {
-            let line = line.unwrap();
-            let mut line = line.split(',');
-            let (hash, label) = (line.next().unwrap(), line.next().unwrap());
-            let hash40 = u64::from_str_radix(&hash[2..], 16).unwrap();
-
-            (hash40, label.to_owned())
-        })
-        .collect::<Vec<_>>();
+    let param_labels = get_labels_hash40(&args);
 
     for (hash, label) in param_labels.iter() {
-        if let Some(pos) = hash_to_pos.get(&hash) {
-            output("text", *pos, label);
+        if let Some(positions) = hash_to_pos.get_vec(&hash) {
+            for pos in positions {
+                output("text", *pos, label);
+            }
         }
     }
 }

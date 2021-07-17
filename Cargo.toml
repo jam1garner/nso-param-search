@@ -8,3 +8,5 @@ edition = "2018"
 nxo-parser = { git = "https://github.com/jam1garner/nxo-parser.git" }
 binread = "1.4"
 structopt = "0.3.21"
+crc32fast = "1.2.1"
+multimap = "0.8.3"
